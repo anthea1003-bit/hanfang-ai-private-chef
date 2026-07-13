@@ -503,16 +503,24 @@ a { color: inherit; }
   gap: 3px;
   min-height: 170px;
   margin-top: 22px;
-  border: 1px dashed var(--sage);
-  border-radius: 48% 52% 43% 57% / 55% 45% 55% 45%;
+  border: 1.5px dashed var(--sage);
+  border-radius: 18px 14px 20px 15px;
   background: rgba(219, 233, 220, .43);
   cursor: pointer;
   text-align: center;
   overflow: hidden;
-  transition: background .2s ease, transform .2s ease;
+  transition: background .2s ease, transform .2s ease, border-color .2s ease;
 }
 
-.upload-zone:hover { background: rgba(219, 233, 220, .8); transform: rotate(.4deg); }
+.upload-zone:hover {
+  border-color: var(--sage-dark);
+  background: rgba(219, 233, 220, .8);
+  transform: translateY(-2px);
+}
+.upload-zone:focus-within {
+  outline: 3px solid rgba(200, 111, 92, .34);
+  outline-offset: 3px;
+}
 .upload-zone input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .camera-mark { font-size: 42px; line-height: 1; transform: rotate(-10deg); }
 .upload-zone strong { font-size: 14px; }
