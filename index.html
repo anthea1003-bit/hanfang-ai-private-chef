@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5efe3" />
+    <meta name="description" content="食品級漢方料理的手機網頁原型。選食材、找食譜、逐步陪煮，再看看附近可能購買點。" />
+    <title>漢方私廚｜食品級料理試玩</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要內容</a>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="漢方私廚首頁">
+        <span class="brand-seal">方</span>
+        <span>
+          <strong>漢方私廚</strong>
+          <small>一餐一方，先從好好吃飯開始</small>
+        </span>
+      </a>
+      <nav class="desktop-nav" aria-label="主要導覽">
+        <a href="#pantry">配一餐</a>
+        <a href="#recommendations">今日食譜</a>
+        <a href="#nearby">附近購買</a>
+        <span class="prototype-chip">家人朋友試玩版</span>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-copy reveal">
+          <p class="eyebrow"><span></span> FOOD-GRADE HANFANG KITCHEN</p>
+          <h1>把櫥櫃裡的食材，<br /><em>煮成今天的一餐。</em></h1>
+          <p class="hero-lede">從 20 種食品級漢方食材與 20 道家常食譜開始。拍照只是候選、食譜都有依據，AI 陪你一步一步煮完。</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#pantry">開始配一餐 <span>→</span></a>
+            <button class="button button-ghost" type="button" data-scroll="#how-it-works">看看怎麼用</button>
+          </div>
+          <dl class="hero-stats" aria-label="試玩版內容摘要">
+            <div><dt>20</dt><dd>食品級食材</dd></div>
+            <div><dt>20</dt><dd>審核前種子食譜</dd></div>
+            <div><dt>3</dt><dd>首發城市</dd></div>
+          </dl>
+        </div>
+
+        <div class="hero-art reveal reveal-delay">
+          <img class="hero-generated-art" src="assets/hero-watercolor-gpt-image2.png" alt="陶鍋、枸杞、紅棗與食材的手繪水彩插畫" fetchpriority="high" />
+          <div class="art-caption"><span>01</span><p>不是藥方，是一份<br />能好好完成的家常料理。</p></div>
+        </div>
+      </section>
+
+      <section class="safety-ribbon" aria-label="產品使用範圍">
+        <span class="safety-icon">食</span>
+        <p><strong>只談料理，不做診斷。</strong> 推薦只根據食材、口味、時間與過敏原；有醫囑飲食限制時，請以專業意見為準。</p>
+        <a href="#trust">我們怎麼守住界線 →</a>
+      </section>
+
+      <section class="section pantry-section" id="pantry">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow"><span></span> START WITH YOUR PANTRY</p>
+            <h2>今天手邊有什麼？</h2>
+          </div>
+          <p>先選食材，再告訴我們時間與要避開的過敏原。試玩版已放入「枸杞＋紅棗」作為範例。</p>
+        </div>
+
+        <div class="pantry-layout">
+          <div class="pantry-card paper-card">
+            <div class="card-toolbar">
+              <label class="search-field">
+                <span aria-hidden="true">⌕</span>
+                <input id="ingredientSearch" type="search" placeholder="搜尋枸杞、紅棗、山藥…" autocomplete="off" />
+              </label>
+              <span class="selected-counter" id="selectedCounter">已選 2 項</span>
+            </div>
+
+            <div class="ingredient-groups" id="ingredientGroups" aria-live="polite"></div>
+
+            <div class="preference-grid">
+              <fieldset class="allergy-fieldset">
+                <legend>需要避開</legend>
+                <label><input type="checkbox" name="allergen" value="soy" /> <span>大豆</span></label>
+                <label><input type="checkbox" name="allergen" value="fish" /> <span>魚類</span></label>
+              </fieldset>
+              <label class="time-field">
+                <span>最多料理時間 <output id="timeOutput">45 分鐘</output></span>
+                <input id="maxMinutes" type="range" min="10" max="60" step="5" value="45" />
+              </label>
+            </div>
+
+            <button class="button button-primary full-width" id="recommendButton" type="button">用這些食材配一餐 <span>→</span></button>
+          </div>
+
+          <aside class="scan-card paper-card" aria-labelledby="scanTitle">
+            <p class="card-kicker">PHOTO HELPER・試玩</p>
+            <h3 id="scanTitle">不確定是哪一種？<br />拍給我看。</h3>
+            <p>照片只會產生候選，不會替你判定能不能吃；影像留在這個瀏覽器預覽，不會上傳。</p>
+            <label class="upload-zone" id="uploadZone">
+              <input id="ingredientPhoto" type="file" accept="image/*" capture="environment" />
+              <span class="camera-mark">⌁</span>
+              <strong>拍照或選擇照片</strong>
+              <small>JPG、PNG</small>
+            </label>
+            <div class="scan-result" id="scanResult" hidden>
+              <img id="scanPreview" alt="你選擇的食材照片預覽" />
+              <div>
+                <small>模擬辨識候選</small>
+                <div class="candidate-list" id="candidateList"></div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section recommendations-section" id="recommendations">
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow"><span></span> TODAY'S KITCHEN NOTES</p>
+            <h2>今天可以這樣煮</h2>
+          </div>
+          <p id="recommendationSummary">依照你已選的 2 項食材，先找最接近的料理。</p>
+        </div>
+        <div class="recipe-grid" id="recipeGrid"></div>
+      </section>
+
+      <section class="section how-section" id="how-it-works">
+        <div class="how-copy">
+          <p class="eyebrow"><span></span> COOK WITH CONFIDENCE</p>
+          <h2>AI 做陪伴，<br />規則守住安全。</h2>
+          <p>推薦不是讓模型自由發明。系統先從既有食譜排除過敏原與時間不合的選項，AI 只負責解釋與逐步陪煮。</p>
+        </div>
+        <ol class="how-steps">
+          <li><span>1</span><div><strong>先排除</strong><p>過敏原、時間與缺少主要食材。</p></div></li>
+          <li><span>2</span><div><strong>再匹配</strong><p>只從 20 道既有食譜找最接近的三道。</p></div></li>
+          <li><span>3</span><div><strong>陪你煮</strong><p>按鍵說話、看進度，不臨場變更原料份量。</p></div></li>
+        </ol>
+      </section>
+
+      <section class="section nearby-section" id="nearby">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow"><span></span> NEARBY, MAYBE IN STOCK</p>
+            <h2>附近可能買得到</h2>
+          </div>
+          <p>目前是示範地點；不讀取即時庫存。出發前請先打電話或向店家確認品項與食品標示。</p>
+        </div>
+        <div class="city-tabs" id="cityTabs" role="tablist" aria-label="選擇城市"></div>
+        <div class="store-grid" id="storeGrid"></div>
+      </section>
+
+      <section class="trust-section" id="trust">
+        <div>
+          <p class="eyebrow light"><span></span> TRUST BY DESIGN</p>
+          <h2>這不是一張藥方。</h2>
+        </div>
+        <div class="trust-grid">
+          <article><span>01</span><h3>來源可追</h3><p>食材保留官方品名、基原與使用部位；公開前逐項複查。</p></article>
+          <article><span>02</span><h3>不確定就停</h3><p>拍照只給候選，低信心回到手動選擇，不猜未知物。</p></article>
+          <article><span>03</span><h3>不碰療效</h3><p>不回答疾病、孕期、藥物相容性或體質處置。</p></article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="brand footer-brand"><span class="brand-seal">方</span><span><strong>漢方私廚</strong><small>Family & friends prototype</small></span></div>
+      <p>食品級料理試玩工具，不替代醫療、營養或食品法規專業意見。</p>
+      <a href="#top">回到上面 ↑</a>
+    </footer>
+
+    <nav class="mobile-nav" aria-label="手機導覽">
+      <a href="#top"><span>⌂</span>首頁</a>
+      <a href="#pantry"><span>＋</span>配一餐</a>
+      <a href="#recommendations"><span>≋</span>食譜</a>
+      <a href="#nearby"><span>⌖</span>購買點</a>
+    </nav>
+
+    <dialog class="recipe-dialog" id="recipeDialog" aria-labelledby="dialogRecipeTitle">
+      <button class="dialog-close" type="button" data-close-dialog aria-label="關閉食譜">×</button>
+      <div id="recipeDialogContent"></div>
+    </dialog>
+
+    <dialog class="cooking-dialog" id="cookingDialog" aria-labelledby="cookingTitle">
+      <button class="dialog-close inverse" type="button" data-close-cooking aria-label="結束陪煮">×</button>
+      <div class="cooking-shell">
+        <header>
+          <p>陪煮中・COOK WITH ME</p>
+          <h2 id="cookingTitle">食譜名稱</h2>
+          <div class="progress-track"><span id="cookingProgressBar"></span></div>
+          <small id="cookingProgressText">步驟 1 / 3</small>
+        </header>
+        <div class="cooking-step">
+          <span id="cookingStepNumber">01</span>
+          <p id="cookingStepText"></p>
+        </div>
+        <div class="cooking-controls">
+          <button class="round-button" id="previousStep" type="button" aria-label="上一步">←</button>
+          <button class="voice-button" id="voiceButton" type="button" aria-pressed="false"><span>按住說話</span><small>試玩互動</small></button>
+          <button class="round-button primary" id="nextStep" type="button" aria-label="下一步">→</button>
+        </div>
+        <p class="live-status" id="liveStatus" aria-live="polite"></p>
+      </div>
+    </dialog>
+
+    <script src="logic.js"></script>
+    <script src="data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
