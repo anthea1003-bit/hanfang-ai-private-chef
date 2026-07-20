@@ -82,10 +82,11 @@
 
   function parseAudioDataUrl(audio, maxBase64Length = 2000000) {
     if (typeof audio !== 'string') return { ok: false, error: 'bad_request' };
-    const match = audio.match(/^data:(audio\/[a-zA-Z0-9.+-]+)(?:;codecs=[^;]+)?;base64,([A-Za-z0-9+/=]+)$/);
+    const match = audio.match(/^data:(audio\/[a-zA-Z0-9.+-]+)(?:;\s*codecs\s*=\s*[^;]+)?;base64,([A-Za-z0-9+/=]+)$/i);
     if (!match) return { ok: false, error: 'bad_request' };
 
-    const [, mimeType, base64Data] = match;
+    const [, rawMimeType, base64Data] = match;
+    const mimeType = rawMimeType.toLowerCase();
     if (!ALLOWED_AUDIO_MIME_TYPES.has(mimeType)) {
       return { ok: false, error: 'unsupported_media_type' };
     }

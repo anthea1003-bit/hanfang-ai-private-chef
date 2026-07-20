@@ -171,6 +171,19 @@ test('audio codecs are accepted without leaking into the Gemini mime type', () =
   });
 });
 
+test('Safari 26 audio MIME parameters may contain whitespace', () => {
+  assert.deepEqual(parseAudioDataUrl('data:audio/mp4; codecs=alac;base64,QUJDRA=='), {
+    ok: true,
+    mimeType: 'audio/mp4',
+    base64Data: 'QUJDRA==',
+  });
+  assert.deepEqual(parseAudioDataUrl('data:audio/mp4; codecs="mp4a.40.2";base64,QUJDRA=='), {
+    ok: true,
+    mimeType: 'audio/mp4',
+    base64Data: 'QUJDRA==',
+  });
+});
+
 test('non-audio and unsupported audio payloads are rejected', () => {
   assert.deepEqual(parseAudioDataUrl('data:image/png;base64,QUJDRA=='), { ok: false, error: 'bad_request' });
   assert.deepEqual(parseAudioDataUrl('data:audio/aac;base64,QUJDRA=='), { ok: false, error: 'unsupported_media_type' });

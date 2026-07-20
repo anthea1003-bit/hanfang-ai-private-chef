@@ -7,6 +7,7 @@ const {
   selectSupportedAudioMimeType,
   buildAudioAssistPayload,
   getVoiceErrorMessage,
+  getAudioAssistHttpErrorMessage,
   getVoiceButtonAction,
   isVoiceSessionCurrent,
   isActiveVoiceRecorder,
@@ -92,6 +93,13 @@ test('voice errors expose actionable Safari and microphone guidance', () => {
   assert.match(getVoiceErrorMessage('NotFoundError'), /找不到可用的麥克風/);
   assert.match(getVoiceErrorMessage('network'), /網路/);
   assert.match(getVoiceErrorMessage('unknown'), /語音錄製失敗/);
+});
+
+test('audio assist HTTP errors explain the actionable cause', () => {
+  assert.match(getAudioAssistHttpErrorMessage(400), /錄音格式/);
+  assert.match(getAudioAssistHttpErrorMessage(429), /一分鐘/);
+  assert.match(getAudioAssistHttpErrorMessage(502), /AI/);
+  assert.match(getAudioAssistHttpErrorMessage(503), /暫時無法使用/);
 });
 
 test('voice button actions preserve explicit consent after the 15-second timeout', () => {
