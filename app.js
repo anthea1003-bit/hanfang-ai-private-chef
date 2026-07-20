@@ -64,6 +64,13 @@
     return '語音錄製失敗，請再試一次。';
   }
 
+  function getAudioAssistHttpErrorMessage(status) {
+    if (status === 400 || status === 415) return '瀏覽器錄音格式無法辨識，請重新整理後再試。';
+    if (status === 429) return '語音使用太頻繁，請等一分鐘後再試。';
+    if (status === 502) return 'AI 語音服務目前忙碌，請稍後再試。';
+    return '語音回答暫時無法使用，請再試一次。';
+  }
+
   function getVoiceButtonAction({ recorderState, hasPendingAudio, requestInFlight }) {
     if (requestInFlight) return 'ignore';
     if (recorderState === 'recording') return 'stop-and-submit';
@@ -87,6 +94,7 @@
     selectSupportedAudioMimeType,
     buildAudioAssistPayload,
     getVoiceErrorMessage,
+    getAudioAssistHttpErrorMessage,
     getVoiceButtonAction,
     isVoiceSessionCurrent,
     isActiveVoiceRecorder,
@@ -99,6 +107,7 @@ const {
   selectSupportedAudioMimeType,
   buildAudioAssistPayload,
   getVoiceErrorMessage,
+  getAudioAssistHttpErrorMessage,
   getVoiceButtonAction,
   isVoiceSessionCurrent,
   isActiveVoiceRecorder,
@@ -474,7 +483,11 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
       }
 
       if (!isCurrentVoiceSession(sessionToken)) return;
-      if (!response.ok) throw new Error(`audio_assist_${response.status}`);
+      if (!response.ok) {
+        const responseError = new Error(`audio_assist_${response.status}`);
+        responseError.status = response.status;
+        throw responseError;
+      }
       const payload = await response.json();
       if (!isCurrentVoiceSession(sessionToken)) return;
       const transcript = typeof payload.transcript === 'string' ? payload.transcript.trim() : '';
@@ -487,7 +500,7 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
       if (!isCurrentVoiceSession(sessionToken)) return;
       liveStatus.textContent = error?.name === 'AbortError'
         ? '語音回答逾時，請再試一次。'
-        : '語音回答暫時無法使用，請再試一次。';
+        : getAudioAssistHttpErrorMessage(error?.status);
     } finally {
       if (voiceRequestController === controller) {
         voiceRequestController = null;
