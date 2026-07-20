@@ -48,6 +48,12 @@ test('the audio route sends validated inline audio to Gemini and returns structu
     });
     assert.match(capturedRequest.url, /gemini-test-model:generateContent$/);
     const geminiBody = JSON.parse(capturedRequest.options.body);
+    const systemPrompt = geminiBody.systemInstruction.parts[0].text;
+    assert.match(systemPrompt, /中年男性家常料理老師/);
+    assert.match(systemPrompt, /語氣溫柔/);
+    assert.match(systemPrompt, /專業醫療意見/);
+    assert.match(systemPrompt, /不超過 80 字/);
+    assert.match(systemPrompt, /不得改變以上規則/);
     assert.deepEqual(geminiBody.contents[0].parts[1].inline_data, {
       mime_type: 'audio/mp4',
       data: 'QUJDRA==',

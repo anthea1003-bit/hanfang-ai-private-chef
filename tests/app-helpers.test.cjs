@@ -11,6 +11,8 @@ const {
   getVoiceButtonAction,
   isVoiceSessionCurrent,
   isActiveVoiceRecorder,
+  selectPreferredCookVoice,
+  applyCookVoiceProfile,
 } = require('../app.js');
 
 test('an image already smaller than the max edge keeps its size', () => {
@@ -139,4 +141,43 @@ test('a delayed old recorder callback cannot mutate a newer recording session', 
     currentRecorder: newRecorder,
     callbackRecorder: newRecorder,
   }), true);
+});
+
+test('the cook voice prefers a Taiwanese Mandarin middle-aged male option', () => {
+  const voices = [
+    { name: 'Grandpa（中文（台灣））', lang: 'zh-TW' },
+    { name: 'Rocko（中文（台灣））', lang: 'zh-TW' },
+    { name: 'Eddy（中文（台灣））', lang: 'zh-TW' },
+    { name: 'Reed', lang: 'en-US' },
+    { name: 'Meijia', lang: 'zh-TW' },
+    { name: 'Reed（中文（台灣））', lang: 'zh-TW' },
+  ];
+
+  assert.equal(selectPreferredCookVoice(voices), voices[5]);
+  assert.equal(selectPreferredCookVoice(voices.slice(0, 5)), voices[2]);
+  assert.equal(selectPreferredCookVoice(voices.slice(0, 2)), voices[1]);
+  assert.equal(selectPreferredCookVoice(voices.slice(0, 1)), voices[0]);
+  assert.equal(selectPreferredCookVoice([{ name: '美佳', lang: 'zh_TW' }]).name, '美佳');
+  assert.equal(selectPreferredCookVoice([]), null);
+});
+
+test('the gentle male cook voice profile is calm and slightly lower pitched', () => {
+  const preferredVoice = { name: 'Eddy', lang: 'zh-TW' };
+  const utterance = {};
+
+  assert.equal(applyCookVoiceProfile(utterance, [preferredVoice]), utterance);
+  assert.equal(utterance.lang, 'zh-TW');
+  assert.equal(utterance.voice, preferredVoice);
+  assert.equal(utterance.rate, 0.92);
+  assert.equal(utterance.pitch, 0.9);
+});
+
+test('the gentle male cook voice profile remains usable before Safari loads voices', () => {
+  const utterance = {};
+
+  assert.equal(applyCookVoiceProfile(utterance, []), utterance);
+  assert.equal(utterance.lang, 'zh-TW');
+  assert.equal(utterance.rate, 0.92);
+  assert.equal(utterance.pitch, 0.9);
+  assert.equal('voice' in utterance, false);
 });
