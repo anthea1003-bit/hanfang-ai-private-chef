@@ -453,7 +453,7 @@ a { color: inherit; }
   height: 65px;
   border-radius: 16px 13px 18px 12px;
   background-color: #f4eadc;
-  background-image: url("assets/ingredient-atlas-gpt-image2.png");
+  background-image: url("assets/ingredient-atlas-gpt-image2.png?v=20260720b");
   background-repeat: no-repeat;
   background-size: 500% 400%;
   border: 1px solid rgba(49,92,75,.2);
