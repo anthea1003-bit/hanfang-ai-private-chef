@@ -95,7 +95,7 @@
           <aside class="scan-card paper-card" aria-labelledby="scanTitle">
             <p class="card-kicker">PHOTO HELPER・試玩</p>
             <h3 id="scanTitle">不確定是哪一種？<br />拍給我看。</h3>
-            <p>照片只會產生候選，不會替你判定能不能吃；影像留在這個瀏覽器預覽，不會上傳。</p>
+            <p id="scanPrivacyNote">照片只會產生候選，不會替你判定能不能吃；影像留在這個瀏覽器預覽，不會上傳。</p>
             <label class="upload-zone" id="uploadZone">
               <input id="ingredientPhoto" type="file" accept="image/*" capture="environment" />
               <span class="camera-mark">⌁</span>
@@ -105,7 +105,7 @@
             <div class="scan-result" id="scanResult" hidden>
               <img id="scanPreview" alt="你選擇的食材照片預覽" />
               <div>
-                <small>模擬辨識候選</small>
+                <small id="candidateLabel">模擬辨識候選</small>
                 <div class="candidate-list" id="candidateList"></div>
               </div>
             </div>
@@ -202,6 +202,8 @@
       </div>
     </dialog>
 
+    <!-- 部署 Worker 後填入網址（見 worker/README-deploy.md），例如 https://hanfang-api.<你的帳號>.workers.dev -->
+    <script>window.HANFANG_API_BASE = 'https://hanfang-api.anthea1003.workers.dev';</script>
     <script src="logic.js"></script>
     <script src="data.js"></script>
     <script src="app.js"></script>

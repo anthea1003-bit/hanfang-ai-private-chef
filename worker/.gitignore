@@ -1,0 +1,6 @@
+# Local secrets for `npx wrangler dev` — never commit.
+.dev.vars
+
+# Wrangler build/cache output
+.wrangler/
+node_modules/

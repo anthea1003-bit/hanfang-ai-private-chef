@@ -1,0 +1,6 @@
+name = "hanfang-api"
+main = "src/index.js"
+compatibility_date = "2026-07-14"
+
+[vars]
+GEMINI_MODEL = "gemini-3.1-flash-lite"

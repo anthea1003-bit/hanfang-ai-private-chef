@@ -1,6 +1,42 @@
-(function initialiseHanfangPrototype() {
+(function exposeHanfangAppHelpers(root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  root.HanfangAppHelpers = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function createHanfangAppHelpers() {
+  function computeScaledDimensions(width, height, maxEdge = 768) {
+    const w = Number(width) || 0;
+    const h = Number(height) || 0;
+    const edge = Number(maxEdge) || 0;
+    if (w <= 0 || h <= 0 || edge <= 0) return { width: 0, height: 0 };
+    const longestEdge = Math.max(w, h);
+    if (longestEdge <= edge) return { width: Math.round(w), height: Math.round(h) };
+    const scale = edge / longestEdge;
+    return { width: Math.round(w * scale), height: Math.round(h * scale) };
+  }
+
+  function buildCandidateViewModels(candidates, ingredients) {
+    const byId = new Map((ingredients || []).map((item) => [item.id, item]));
+    return (candidates || [])
+      .filter((candidate) => candidate && byId.has(candidate.id))
+      .map((candidate) => {
+        const ingredient = byId.get(candidate.id);
+        const confidenceNumber = Number(candidate.confidence);
+        const confidence = Number.isFinite(confidenceNumber) ? Math.max(0, Math.min(1, confidenceNumber)) : 0;
+        return { id: ingredient.id, name: ingredient.name, confidencePercent: Math.round(confidence * 100) };
+      });
+  }
+
+  return { computeScaledDimensions, buildCandidateViewModels };
+});
+
+const { computeScaledDimensions, buildCandidateViewModels } =
+  (typeof globalThis !== 'undefined' ? globalThis : this).HanfangAppHelpers;
+
+if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic) {
+  (function initialiseHanfangPrototype() {
   'use strict';
 
+  const API_BASE = window.HANFANG_API_BASE || '';
   const { ingredients, recipes, stores } = window.HANFANG_DATA;
   const { recommendRecipes, filterStoresByCity, getRecipeProgress, getAtlasPositionForId } = window.HanfangLogic;
 
@@ -27,6 +63,8 @@
   const photoInput = document.querySelector('#ingredientPhoto');
   const scanResult = document.querySelector('#scanResult');
   const scanPreview = document.querySelector('#scanPreview');
+  const scanPrivacyNote = document.querySelector('#scanPrivacyNote');
+  const candidateLabel = document.querySelector('#candidateLabel');
   const candidateList = document.querySelector('#candidateList');
   const cityTabs = document.querySelector('#cityTabs');
   const storeGrid = document.querySelector('#storeGrid');
@@ -171,14 +209,145 @@
     return [0, 3, 7].map((offset) => ingredientById(ids[(seed + offset) % ids.length]));
   }
 
-  function showPhotoCandidates(file) {
+  function updateScanCopy() {
+    if (!scanPrivacyNote) return;
+    scanPrivacyNote.textContent = API_BASE
+      ? '照片只會產生候選，不會替你判定能不能吃；照片會傳送到 AI 辨識，不會保存。'
+      : '照片只會產生候選，不會替你判定能不能吃；影像留在這個瀏覽器預覽，不會上傳。';
+  }
+
+  function renderCandidateButtons(items) {
+    if (!items.length) {
+      candidateList.innerHTML = '<p class="empty-note">認不出來，請手動選擇。</p>';
+      return;
+    }
+    candidateList.innerHTML = items.map((item) => `
+      <button class="candidate-button" type="button" data-candidate-id="${item.id}">＋ ${item.name}${
+        item.confidencePercent === undefined ? '' : `（${item.confidencePercent}%）`
+      }</button>
+    `).join('');
+  }
+
+  function renderDeterministicFallback(fileName, label) {
+    if (candidateLabel) candidateLabel.textContent = label;
+    const items = deterministicCandidates(fileName).map((ingredient) => ({ id: ingredient.id, name: ingredient.name }));
+    renderCandidateButtons(items);
+  }
+
+  function compressImageToDataUrl(file, maxEdge = 768, quality = 0.8) {
+    return new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        const { width, height } = computeScaledDimensions(image.naturalWidth, image.naturalHeight, maxEdge);
+        const canvas = document.createElement('canvas');
+        canvas.width = width || image.naturalWidth;
+        canvas.height = height || image.naturalHeight;
+        const context = canvas.getContext('2d');
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(objectUrl);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('image_load_failed'));
+      };
+      image.src = objectUrl;
+    });
+  }
+
+  let scanSequence = 0;
+
+  async function showPhotoCandidates(file) {
+    // Increasing sequence number: if a newer photo was picked while this one
+    // was still identifying, the stale result is dropped instead of rendered.
+    const sequence = ++scanSequence;
+
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
     state.previewUrl = URL.createObjectURL(file);
     scanPreview.src = state.previewUrl;
     scanResult.hidden = false;
-    candidateList.innerHTML = deterministicCandidates(file.name).map((ingredient) => `
-      <button class="candidate-button" type="button" data-candidate-id="${ingredient.id}">＋ ${ingredient.name}</button>
-    `).join('');
+
+    if (!API_BASE) {
+      renderDeterministicFallback(file.name, '模擬辨識候選');
+      return;
+    }
+
+    if (candidateLabel) candidateLabel.textContent = '辨識中…';
+    candidateList.innerHTML = '<p class="empty-note">正在辨識，請稍候…</p>';
+
+    try {
+      const dataUrl = await compressImageToDataUrl(file);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      let response;
+      try {
+        response = await fetch(`${API_BASE}/api/identify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: dataUrl }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      if (sequence !== scanSequence) return;
+      if (!response.ok) throw new Error('identify_failed');
+      const payload = await response.json();
+      if (sequence !== scanSequence) return;
+      const viewModels = buildCandidateViewModels(payload.candidates, ingredients);
+      if (!viewModels.length) {
+        if (candidateLabel) candidateLabel.textContent = '辨識候選';
+        candidateList.innerHTML = '<p class="empty-note">認不出來，請手動選擇。</p>';
+        return;
+      }
+      if (candidateLabel) candidateLabel.textContent = '辨識候選（信心度）';
+      renderCandidateButtons(viewModels);
+    } catch (error) {
+      if (sequence !== scanSequence) return;
+      renderDeterministicFallback(file.name, '模擬候選');
+    }
+  }
+
+  async function askCookAssist(question) {
+    const liveStatus = document.querySelector('#liveStatus');
+    if (!state.activeRecipe) {
+      liveStatus.textContent = '請先開始陪煮再發問。';
+      return;
+    }
+    liveStatus.textContent = `你問：${question}（思考中…）`;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      let response;
+      try {
+        response = await fetch(`${API_BASE}/api/cook-assist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recipeTitle: state.activeRecipe.title,
+            stepIndex: state.cookingStep,
+            stepText: state.activeRecipe.steps[state.cookingStep],
+            question,
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      if (!response.ok) throw new Error('cook_assist_failed');
+      const payload = await response.json();
+      const answer = payload.answer || '目前沒有回覆，請再試一次。';
+      liveStatus.textContent = answer;
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(answer);
+        utterance.lang = 'zh-TW';
+        window.speechSynthesis.speak(utterance);
+      }
+    } catch (error) {
+      liveStatus.textContent = '網路不太穩，請再問一次。';
+    }
   }
 
   function renderStores() {
@@ -237,7 +406,10 @@
     if (event.target.closest('[data-start-cooking]')) startCooking();
   });
 
-  document.querySelector('[data-close-cooking]').addEventListener('click', () => cookingDialog.close());
+  document.querySelector('[data-close-cooking]').addEventListener('click', () => {
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    cookingDialog.close();
+  });
 
   document.querySelector('#previousStep').addEventListener('click', () => {
     state.cookingStep -= 1;
@@ -254,8 +426,88 @@
     }
   });
 
+  const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognizer = null;
+  let isListening = false;
+  let discardVoiceResult = false;
+
+  function supportsVoiceAssist() {
+    return Boolean(SpeechRecognitionCtor) && Boolean(API_BASE);
+  }
+
+  function stopListening(button, options = {}) {
+    isListening = false;
+    if (options.userCancelled) discardVoiceResult = true;
+    if (recognizer) {
+      try {
+        // abort() drops audio already captured; stop() would still fire
+        // onresult and send a request the user just cancelled.
+        if (options.userCancelled && typeof recognizer.abort === 'function') recognizer.abort();
+        else recognizer.stop();
+      } catch (error) {
+        // no-op: recognizer may already be stopped
+      }
+    }
+    button.setAttribute('aria-pressed', 'false');
+    button.querySelector('span').textContent = '按住說話';
+  }
+
+  function startListening(button) {
+    recognizer = new SpeechRecognitionCtor();
+    recognizer.lang = 'zh-TW';
+    recognizer.interimResults = false;
+    recognizer.maxAlternatives = 1;
+
+    isListening = true;
+    discardVoiceResult = false;
+    button.setAttribute('aria-pressed', 'true');
+    button.querySelector('span').textContent = '正在聽…';
+    document.querySelector('#liveStatus').textContent = '請說出你的問題…';
+
+    recognizer.onresult = (event) => {
+      if (discardVoiceResult) return;
+      const transcript = event.results?.[0]?.[0]?.transcript || '';
+      document.querySelector('#liveStatus').textContent = `你問：${transcript}`;
+      stopListening(button);
+      if (transcript.trim()) askCookAssist(transcript.trim());
+    };
+
+    recognizer.onerror = (event) => {
+      stopListening(button);
+      if (event.error === 'aborted') {
+        document.querySelector('#liveStatus').textContent = '已停止聆聽。';
+        return;
+      }
+      document.querySelector('#liveStatus').textContent = event.error === 'not-allowed' || event.error === 'permission-denied'
+        ? '沒有取得麥克風權限，請確認瀏覽器設定。'
+        : '語音辨識失敗，請再試一次。';
+    };
+
+    recognizer.onend = () => {
+      if (isListening) stopListening(button);
+    };
+
+    try {
+      recognizer.start();
+    } catch (error) {
+      stopListening(button);
+      document.querySelector('#liveStatus').textContent = '無法啟動語音辨識，請再試一次。';
+    }
+  }
+
   document.querySelector('#voiceButton').addEventListener('click', (event) => {
     const button = event.currentTarget;
+
+    if (supportsVoiceAssist()) {
+      if (isListening) {
+        stopListening(button, { userCancelled: true });
+        document.querySelector('#liveStatus').textContent = '已停止聆聽。';
+      } else {
+        startListening(button);
+      }
+      return;
+    }
+
     const listening = button.getAttribute('aria-pressed') !== 'true';
     button.setAttribute('aria-pressed', String(listening));
     button.querySelector('span').textContent = listening ? '正在聽…' : '按住說話';
@@ -294,7 +546,9 @@
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
   });
 
+  updateScanCopy();
   renderIngredients();
   renderRecommendations();
   renderStores();
-})();
+  })();
+}
