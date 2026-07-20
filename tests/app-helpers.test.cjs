@@ -1,7 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { computeScaledDimensions, buildCandidateViewModels } = require('../app.js');
+const {
+  computeScaledDimensions,
+  buildCandidateViewModels,
+  selectSupportedAudioMimeType,
+  buildAudioAssistPayload,
+  getVoiceErrorMessage,
+  getVoiceButtonAction,
+  isVoiceSessionCurrent,
+  isActiveVoiceRecorder,
+} = require('../app.js');
 
 test('an image already smaller than the max edge keeps its size', () => {
   assert.deepEqual(computeScaledDimensions(400, 300, 768), { width: 400, height: 300 });
@@ -48,4 +57,78 @@ test('an empty or missing candidate list yields an empty view model list', () =>
 test('an out-of-range confidence value is clamped to 0-1 before conversion', () => {
   const result = buildCandidateViewModels([{ id: 'I11', confidence: 5 }], ingredients);
   assert.deepEqual(result, [{ id: 'I11', name: '紅棗', confidencePercent: 100 }]);
+});
+
+test('Safari-compatible MP4 audio is preferred when MediaRecorder supports it', () => {
+  const supported = new Set(['audio/mp4', 'audio/webm']);
+  const MediaRecorderCtor = {
+    isTypeSupported: (mimeType) => supported.has(mimeType),
+  };
+
+  assert.equal(selectSupportedAudioMimeType(MediaRecorderCtor), 'audio/mp4');
+});
+
+test('audio recording can fall back to the browser default mime type', () => {
+  assert.equal(selectSupportedAudioMimeType(null), '');
+  assert.equal(selectSupportedAudioMimeType({}), '');
+});
+
+test('the audio assist payload contains only bounded cooking context and audio', () => {
+  const result = buildAudioAssistPayload({
+    recipeTitle: '陳皮生薑茶'.repeat(20),
+    stepIndex: 2,
+    stepText: '薑切薄片。'.repeat(100),
+    audio: 'data:audio/mp4;base64,QUJDRA==',
+  });
+
+  assert.equal(result.recipeTitle.length, 50);
+  assert.equal(result.stepIndex, 2);
+  assert.equal(result.stepText.length, 300);
+  assert.equal(result.audio, 'data:audio/mp4;base64,QUJDRA==');
+});
+
+test('voice errors expose actionable Safari and microphone guidance', () => {
+  assert.match(getVoiceErrorMessage('NotAllowedError'), /麥克風權限/);
+  assert.match(getVoiceErrorMessage('NotFoundError'), /找不到可用的麥克風/);
+  assert.match(getVoiceErrorMessage('network'), /網路/);
+  assert.match(getVoiceErrorMessage('unknown'), /語音錄製失敗/);
+});
+
+test('voice button actions preserve explicit consent after the 15-second timeout', () => {
+  assert.equal(getVoiceButtonAction({}), 'start');
+  assert.equal(getVoiceButtonAction({ recorderState: 'recording' }), 'stop-and-submit');
+  assert.equal(getVoiceButtonAction({ hasPendingAudio: true }), 'submit-pending');
+  assert.equal(getVoiceButtonAction({ hasPendingAudio: true, requestInFlight: true }), 'ignore');
+});
+
+test('stale or closed voice sessions cannot continue after permission resolves', () => {
+  assert.equal(isVoiceSessionCurrent(4, 4, true), true);
+  assert.equal(isVoiceSessionCurrent(5, 4, true), false);
+  assert.equal(isVoiceSessionCurrent(4, 4, false), false);
+});
+
+test('a delayed old recorder callback cannot mutate a newer recording session', () => {
+  const oldRecorder = {};
+  const newRecorder = {};
+  assert.equal(isActiveVoiceRecorder({
+    activeSession: 8,
+    callbackSession: 7,
+    dialogOpen: true,
+    currentRecorder: newRecorder,
+    callbackRecorder: oldRecorder,
+  }), false);
+  assert.equal(isActiveVoiceRecorder({
+    activeSession: 8,
+    callbackSession: 8,
+    dialogOpen: true,
+    currentRecorder: newRecorder,
+    callbackRecorder: oldRecorder,
+  }), false);
+  assert.equal(isActiveVoiceRecorder({
+    activeSession: 8,
+    callbackSession: 8,
+    dialogOpen: true,
+    currentRecorder: newRecorder,
+    callbackRecorder: newRecorder,
+  }), true);
 });

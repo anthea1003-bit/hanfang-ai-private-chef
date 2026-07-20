@@ -1,6 +1,12 @@
 import HanfangWorkerLib from './lib.js';
 
-const { isAllowedOrigin, parseCandidates, checkRateLimit } = HanfangWorkerLib;
+const {
+  isAllowedOrigin,
+  parseCandidates,
+  checkRateLimit,
+  parseAudioDataUrl,
+  parseAudioAssistResult,
+} = HanfangWorkerLib;
 
 // Food-grade hanfang ingredient list, copied from data.js (id + name only).
 const INGREDIENTS = [
@@ -45,6 +51,15 @@ const IDENTIFY_RESPONSE_SCHEMA = {
   required: ['candidates'],
 };
 
+const AUDIO_ASSIST_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    transcript: { type: 'STRING' },
+    answer: { type: 'STRING' },
+  },
+  required: ['transcript', 'answer'],
+};
+
 const COOK_ASSIST_SYSTEM_PROMPT = [
   '你是漢方私廚陪煮小幫手，只回答料理技巧與步驟疑問（火候、切法、時間、份量、替代食材等）。',
   '不談療效、疾病、孕期、藥物交互作用或體質調理；被問到這些，一律回答「這部分請以專業醫療意見為準」。',
@@ -54,6 +69,7 @@ const COOK_ASSIST_SYSTEM_PROMPT = [
 
 // Reset when the Worker isolate restarts or redeploys — fine for an MVP abuse throttle.
 const rateLimitStore = new Map();
+const audioRateLimitFallbackStore = new Map();
 
 function buildIdentifyPrompt() {
   const list = INGREDIENTS.map((item) => `${item.id} ${item.name}`).join('\n');
@@ -199,6 +215,62 @@ async function handleCookAssist(request, corsHeaders, env) {
   return jsonResponse({ answer }, 200, corsHeaders);
 }
 
+async function handleCookAssistAudio(request, corsHeaders, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return jsonResponse({ error: 'bad_request' }, 400, corsHeaders);
+  }
+
+  const parsedAudio = parseAudioDataUrl(body?.audio);
+  if (!parsedAudio.ok) {
+    const status = parsedAudio.error === 'payload_too_large'
+      ? 413
+      : parsedAudio.error === 'unsupported_media_type' ? 415 : 400;
+    return jsonResponse({ error: parsedAudio.error }, status, corsHeaders);
+  }
+
+  const recipeTitle = (typeof body?.recipeTitle === 'string' ? body.recipeTitle : '未知').slice(0, 50);
+  const stepText = (typeof body?.stepText === 'string' ? body.stepText : '未知').slice(0, 300);
+  const stepIndexNumber = Number(body?.stepIndex);
+  const stepIndex = Number.isFinite(stepIndexNumber) ? stepIndexNumber : 0;
+
+  const userPrompt = [
+    `食譜：${recipeTitle}`,
+    `目前步驟（第 ${stepIndex + 1} 步）：${stepText}`,
+    '請先逐字辨識音訊中的問題，再依照系統規則回答。',
+    '若沒有清楚的人聲，transcript 請回傳空字串，answer 回傳「沒有聽清楚，請再說一次。」',
+  ].join('\n');
+
+  const requestBody = {
+    systemInstruction: { parts: [{ text: COOK_ASSIST_SYSTEM_PROMPT }] },
+    contents: [{
+      parts: [
+        { text: userPrompt },
+        { inline_data: { mime_type: parsedAudio.mimeType, data: parsedAudio.base64Data } },
+      ],
+    }],
+    generationConfig: {
+      maxOutputTokens: 220,
+      responseMimeType: 'application/json',
+      responseSchema: AUDIO_ASSIST_RESPONSE_SCHEMA,
+    },
+    safetySettings: [
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_LOW_AND_ABOVE' },
+    ],
+  };
+
+  let geminiPayload;
+  try {
+    geminiPayload = await callGemini(env, requestBody);
+  } catch (error) {
+    return jsonResponse({ error: 'upstream' }, 502, corsHeaders);
+  }
+
+  return jsonResponse(parseAudioAssistResult(extractResponseText(geminiPayload)), 200, corsHeaders);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get('Origin');
@@ -215,17 +287,29 @@ export default {
     }
 
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-    const { allowed } = checkRateLimit(rateLimitStore, ip, Date.now());
+    const now = Date.now();
+    const { allowed } = checkRateLimit(rateLimitStore, ip, now);
     if (!allowed) {
       return jsonResponse({ error: 'rate_limited' }, 429, corsHeaders);
     }
 
     const url = new URL(request.url);
+    if (request.method === 'POST' && url.pathname === '/api/cook-assist-audio') {
+      const audioLimitResult = env.AUDIO_RATE_LIMITER?.limit
+        ? await env.AUDIO_RATE_LIMITER.limit({ key: ip })
+        : { success: checkRateLimit(audioRateLimitFallbackStore, ip, now, 6).allowed };
+      if (!audioLimitResult.success) {
+        return jsonResponse({ error: 'rate_limited' }, 429, corsHeaders);
+      }
+    }
     if (request.method === 'POST' && url.pathname === '/api/identify') {
       return handleIdentify(request, corsHeaders, env);
     }
     if (request.method === 'POST' && url.pathname === '/api/cook-assist') {
       return handleCookAssist(request, corsHeaders, env);
+    }
+    if (request.method === 'POST' && url.pathname === '/api/cook-assist-audio') {
+      return handleCookAssistAudio(request, corsHeaders, env);
     }
     return jsonResponse({ error: 'not_found' }, 404, corsHeaders);
   },
