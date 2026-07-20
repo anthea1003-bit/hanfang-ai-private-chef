@@ -92,19 +92,19 @@
     const taiwaneseVoices = (Array.isArray(voices) ? voices : []).filter((voice) => (
       String(voice?.lang || '').replace('_', '-').toLowerCase() === 'zh-tw'
     ));
-    const preferredNames = ['Reed', 'Eddy', 'Rocko', 'Grandpa'];
+    const preferredNames = ['Meijia', 'Mei-Jia', '美佳'];
     for (const preferredName of preferredNames) {
       const match = taiwaneseVoices.find((voice) => String(voice?.name || '').toLowerCase().includes(preferredName.toLowerCase()));
       if (match) return match;
     }
-    return null;
+    return taiwaneseVoices[0] || null;
   }
 
   function applyCookVoiceProfile(utterance, voices) {
     if (!utterance || typeof utterance !== 'object') return utterance;
     utterance.lang = 'zh-TW';
-    utterance.rate = 0.92;
-    utterance.pitch = 0.9;
+    utterance.rate = 1;
+    utterance.pitch = 1;
     const preferredVoice = selectPreferredCookVoice(voices);
     if (preferredVoice) utterance.voice = preferredVoice;
     return utterance;
@@ -520,7 +520,7 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
       liveStatus.textContent = answer;
       const spoken = await speakCookAssistAnswer(answer);
       if (!spoken && cookingDialog.open) {
-        liveStatus.textContent += '\n（Safari 尚未載入台灣男聲，已停止女聲替代；請再問一次。）';
+        liveStatus.textContent += '\n（Safari 尚未載入台灣語音，請再問一次。）';
       }
     } catch (error) {
       liveStatus.textContent = '網路不太穩，請再問一次。';
@@ -608,7 +608,7 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
       if (transcript) {
         const spoken = await speakCookAssistAnswer(answer, () => isCurrentVoiceSession(sessionToken));
         if (!spoken && isCurrentVoiceSession(sessionToken)) {
-          liveStatus.textContent += '\n（Safari 尚未載入台灣男聲，已停止女聲替代；請再問一次。）';
+          liveStatus.textContent += '\n（Safari 尚未載入台灣語音，請再問一次。）';
         }
       }
     } catch (error) {

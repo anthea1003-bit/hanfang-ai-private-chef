@@ -147,47 +147,43 @@ test('a delayed old recorder callback cannot mutate a newer recording session', 
   }), true);
 });
 
-test('the cook voice prefers a Taiwanese Mandarin middle-aged male option', () => {
+test('the cook voice prefers the original Meijia Taiwanese female option', () => {
   const voices = [
-    { name: 'Grandpa（中文（台灣））', lang: 'zh-TW' },
-    { name: 'Rocko（中文（台灣））', lang: 'zh-TW' },
-    { name: 'Eddy（中文（台灣））', lang: 'zh-TW' },
-    { name: 'Reed', lang: 'en-US' },
-    { name: 'Meijia', lang: 'zh-TW' },
     { name: 'Reed（中文（台灣））', lang: 'zh-TW' },
+    { name: '美佳', lang: 'zh_TW' },
+    { name: 'Meijia', lang: 'en-US' },
   ];
 
-  assert.equal(selectPreferredCookVoice(voices), voices[5]);
-  assert.equal(selectPreferredCookVoice(voices.slice(0, 5)), voices[2]);
-  assert.equal(selectPreferredCookVoice(voices.slice(0, 2)), voices[1]);
-  assert.equal(selectPreferredCookVoice(voices.slice(0, 1)), voices[0]);
-  assert.equal(selectPreferredCookVoice([{ name: '美佳', lang: 'zh_TW' }]), null);
+  assert.equal(selectPreferredCookVoice(voices), voices[1]);
+  assert.equal(selectPreferredCookVoice([{ name: 'Mei-Jia', lang: 'zh-TW' }]).name, 'Mei-Jia');
+  assert.equal(selectPreferredCookVoice([{ name: 'Sandy', lang: 'zh-TW' }]).name, 'Sandy');
+  assert.equal(selectPreferredCookVoice([{ name: 'Meijia', lang: 'en-US' }]), null);
   assert.equal(selectPreferredCookVoice([]), null);
 });
 
-test('the gentle male cook voice profile is calm and slightly lower pitched', () => {
-  const preferredVoice = { name: 'Eddy', lang: 'zh-TW' };
+test('the restored Taiwanese female voice uses the original natural profile', () => {
+  const preferredVoice = { name: '美佳', lang: 'zh-TW' };
   const utterance = {};
 
   assert.equal(applyCookVoiceProfile(utterance, [preferredVoice]), utterance);
   assert.equal(utterance.lang, 'zh-TW');
   assert.equal(utterance.voice, preferredVoice);
-  assert.equal(utterance.rate, 0.92);
-  assert.equal(utterance.pitch, 0.9);
+  assert.equal(utterance.rate, 1);
+  assert.equal(utterance.pitch, 1);
 });
 
-test('the gentle male cook voice profile remains usable before Safari loads voices', () => {
+test('the restored Taiwanese voice profile remains usable before Safari loads voices', () => {
   const utterance = {};
 
   assert.equal(applyCookVoiceProfile(utterance, []), utterance);
   assert.equal(utterance.lang, 'zh-TW');
-  assert.equal(utterance.rate, 0.92);
-  assert.equal(utterance.pitch, 0.9);
+  assert.equal(utterance.rate, 1);
+  assert.equal(utterance.pitch, 1);
   assert.equal('voice' in utterance, false);
 });
 
-test('Safari waits for voiceschanged instead of falling back to its default female voice', async () => {
-  const preferredVoice = { name: 'Reed（中文（台灣））', lang: 'zh-TW' };
+test('Safari waits for voiceschanged and then selects the Taiwanese female voice', async () => {
+  const preferredVoice = { name: '美佳', lang: 'zh-TW' };
   const synthesis = {
     voices: [],
     listener: null,
@@ -205,27 +201,28 @@ test('Safari waits for voiceschanged instead of falling back to its default fema
   };
 
   const pendingVoice = waitForPreferredCookVoice(synthesis, 100);
-  synthesis.voices = [{ name: '美佳', lang: 'zh-TW' }, preferredVoice];
+  synthesis.voices = [{ name: 'Reed（中文（台灣））', lang: 'zh-TW' }, preferredVoice];
   synthesis.listener();
 
   assert.equal(await pendingVoice, preferredVoice);
   assert.equal(synthesis.listener, null);
 });
 
-test('Safari never substitutes a Taiwanese female voice when no preferred male voice loads', async () => {
+test('Safari uses an available Taiwanese female voice without waiting for a male voice', async () => {
+  const preferredVoice = { name: '美佳', lang: 'zh-TW' };
   const synthesis = {
-    getVoices: () => [{ name: '美佳', lang: 'zh-TW' }],
+    getVoices: () => [preferredVoice],
     addEventListener() {},
     removeEventListener() {},
   };
 
-  assert.equal(await waitForPreferredCookVoice(synthesis, 0), null);
+  assert.equal(await waitForPreferredCookVoice(synthesis, 0), preferredVoice);
 });
 
 test('Safari cleans up the voiceschanged listener after a positive timeout', async () => {
   const synthesis = {
     listener: null,
-    getVoices: () => [{ name: '美佳', lang: 'zh-TW' }],
+    getVoices: () => [{ name: 'Samantha', lang: 'en-US' }],
     addEventListener(eventName, listener) {
       this.listener = listener;
     },
@@ -239,7 +236,7 @@ test('Safari cleans up the voiceschanged listener after a positive timeout', asy
 });
 
 test('closing the cooking dialog while Safari waits prevents delayed speech', async () => {
-  const preferredVoice = { name: 'Reed（中文（台灣））', lang: 'zh-TW' };
+  const preferredVoice = { name: '美佳', lang: 'zh-TW' };
   let dialogOpen = true;
   let spokenUtterance = null;
   const synthesis = {
@@ -275,7 +272,7 @@ test('closing the cooking dialog while Safari waits prevents delayed speech', as
   assert.equal(spokenUtterance, null);
 });
 
-test('aborting a pending male voice request removes its listener', async () => {
+test('aborting a pending Taiwanese voice request removes its listener', async () => {
   const controller = new AbortController();
   const synthesis = {
     listener: null,
@@ -295,8 +292,8 @@ test('aborting a pending male voice request removes its listener', async () => {
   assert.equal(await pendingVoice, null);
 });
 
-test('the deployed app script is cache-busted so Safari receives voice fixes immediately', () => {
+test('the deployed app script is cache-busted so Safari receives the restored female voice immediately', () => {
   const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
 
-  assert.match(html, /<script src="app\.js\?v=[^"]+"><\/script>/);
+  assert.match(html, /<script src="app\.js\?v=20260720-female-voice-3"><\/script>/);
 });
