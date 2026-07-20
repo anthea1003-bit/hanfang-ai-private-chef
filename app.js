@@ -97,7 +97,7 @@
       const match = taiwaneseVoices.find((voice) => String(voice?.name || '').toLowerCase().includes(preferredName.toLowerCase()));
       if (match) return match;
     }
-    return taiwaneseVoices[0] || null;
+    return null;
   }
 
   function applyCookVoiceProfile(utterance, voices) {
@@ -108,6 +108,71 @@
     const preferredVoice = selectPreferredCookVoice(voices);
     if (preferredVoice) utterance.voice = preferredVoice;
     return utterance;
+  }
+
+  function waitForPreferredCookVoice(speechSynthesis, timeoutMs = 2000, signal) {
+    if (!speechSynthesis || typeof speechSynthesis.getVoices !== 'function') {
+      return Promise.resolve(null);
+    }
+    if (signal?.aborted) return Promise.resolve(null);
+
+    const getPreferredVoice = () => {
+      try {
+        return selectPreferredCookVoice(speechSynthesis.getVoices());
+      } catch (error) {
+        return null;
+      }
+    };
+    const immediateVoice = getPreferredVoice();
+    if (immediateVoice || timeoutMs <= 0 || typeof speechSynthesis.addEventListener !== 'function') {
+      return Promise.resolve(immediateVoice);
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeoutId;
+      const finish = (voice) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+        speechSynthesis.removeEventListener?.('voiceschanged', handleVoicesChanged);
+        signal?.removeEventListener?.('abort', handleAbort);
+        resolve(voice || null);
+      };
+      const handleVoicesChanged = () => {
+        const voice = getPreferredVoice();
+        if (voice) finish(voice);
+      };
+      const handleAbort = () => finish(null);
+
+      timeoutId = setTimeout(() => finish(getPreferredVoice()), timeoutMs);
+      speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged);
+      signal?.addEventListener?.('abort', handleAbort, { once: true });
+      if (signal?.aborted) handleAbort();
+    });
+  }
+
+  async function speakWithPreferredCookVoice({
+    speechSynthesis,
+    createUtterance,
+    answer,
+    timeoutMs = 2000,
+    signal,
+    isCurrent = () => true,
+  }) {
+    if (
+      !speechSynthesis
+      || typeof speechSynthesis.speak !== 'function'
+      || typeof createUtterance !== 'function'
+    ) return false;
+
+    speechSynthesis.cancel?.();
+    const preferredVoice = await waitForPreferredCookVoice(speechSynthesis, timeoutMs, signal);
+    if (!preferredVoice || signal?.aborted || !isCurrent()) return false;
+
+    const utterance = applyCookVoiceProfile(createUtterance(answer), [preferredVoice]);
+    speechSynthesis.speak(utterance);
+    return true;
   }
 
   return {
@@ -122,6 +187,8 @@
     isActiveVoiceRecorder,
     selectPreferredCookVoice,
     applyCookVoiceProfile,
+    waitForPreferredCookVoice,
+    speakWithPreferredCookVoice,
   };
 });
 
@@ -137,6 +204,8 @@ const {
   isActiveVoiceRecorder,
   selectPreferredCookVoice,
   applyCookVoiceProfile,
+  waitForPreferredCookVoice,
+  speakWithPreferredCookVoice,
 } =
   (typeof globalThis !== 'undefined' ? globalThis : this).HanfangAppHelpers;
 
@@ -157,6 +226,7 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
     cookingStep: 0,
     previewUrl: null,
   };
+  let cookSpeechController = null;
 
   const ingredientGroups = document.querySelector('#ingredientGroups');
   const ingredientSearch = document.querySelector('#ingredientSearch');
@@ -448,7 +518,10 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
       const payload = await response.json();
       const answer = payload.answer || '目前沒有回覆，請再試一次。';
       liveStatus.textContent = answer;
-      speakCookAssistAnswer(answer);
+      const spoken = await speakCookAssistAnswer(answer);
+      if (!spoken && cookingDialog.open) {
+        liveStatus.textContent += '\n（Safari 尚未載入台灣男聲，已停止女聲替代；請再問一次。）';
+      }
     } catch (error) {
       liveStatus.textContent = '網路不太穩，請再問一次。';
     }
@@ -463,14 +536,28 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
     });
   }
 
-  function speakCookAssistAnswer(answer) {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = applyCookVoiceProfile(
-      new SpeechSynthesisUtterance(answer),
-      window.speechSynthesis.getVoices(),
-    );
-    window.speechSynthesis.speak(utterance);
+  function cancelCookAssistSpeech() {
+    cookSpeechController?.abort();
+    cookSpeechController = null;
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  }
+
+  async function speakCookAssistAnswer(answer, isCurrent = () => cookingDialog.open) {
+    if (!('speechSynthesis' in window)) return false;
+    cancelCookAssistSpeech();
+    const controller = new AbortController();
+    cookSpeechController = controller;
+    try {
+      return await speakWithPreferredCookVoice({
+        speechSynthesis: window.speechSynthesis,
+        createUtterance: (text) => new SpeechSynthesisUtterance(text),
+        answer,
+        signal: controller.signal,
+        isCurrent,
+      });
+    } finally {
+      if (cookSpeechController === controller) cookSpeechController = null;
+    }
   }
 
   async function askCookAssistAudio(audio, sessionToken) {
@@ -518,7 +605,12 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
         ? payload.answer.trim()
         : '沒有聽清楚，請再說一次。';
       liveStatus.textContent = transcript ? `你問：${transcript}\n${answer}` : answer;
-      if (transcript) speakCookAssistAnswer(answer);
+      if (transcript) {
+        const spoken = await speakCookAssistAnswer(answer, () => isCurrentVoiceSession(sessionToken));
+        if (!spoken && isCurrentVoiceSession(sessionToken)) {
+          liveStatus.textContent += '\n（Safari 尚未載入台灣男聲，已停止女聲替代；請再問一次。）';
+        }
+      }
     } catch (error) {
       if (!isCurrentVoiceSession(sessionToken)) return;
       liveStatus.textContent = error?.name === 'AbortError'
@@ -591,14 +683,14 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
 
   document.querySelector('[data-close-cooking]').addEventListener('click', () => {
     cancelVoiceRecording();
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    cancelCookAssistSpeech();
     cookingDialog.close();
   });
 
   cookingDialog.addEventListener('cancel', cancelVoiceRecording);
   cookingDialog.addEventListener('close', () => {
     cancelVoiceRecording();
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    cancelCookAssistSpeech();
   });
 
   document.querySelector('#previousStep').addEventListener('click', () => {
