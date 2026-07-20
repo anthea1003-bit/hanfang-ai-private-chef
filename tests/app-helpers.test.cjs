@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   computeScaledDimensions,
@@ -13,6 +15,8 @@ const {
   isActiveVoiceRecorder,
   selectPreferredCookVoice,
   applyCookVoiceProfile,
+  waitForPreferredCookVoice,
+  speakWithPreferredCookVoice,
 } = require('../app.js');
 
 test('an image already smaller than the max edge keeps its size', () => {
@@ -157,7 +161,7 @@ test('the cook voice prefers a Taiwanese Mandarin middle-aged male option', () =
   assert.equal(selectPreferredCookVoice(voices.slice(0, 5)), voices[2]);
   assert.equal(selectPreferredCookVoice(voices.slice(0, 2)), voices[1]);
   assert.equal(selectPreferredCookVoice(voices.slice(0, 1)), voices[0]);
-  assert.equal(selectPreferredCookVoice([{ name: '美佳', lang: 'zh_TW' }]).name, '美佳');
+  assert.equal(selectPreferredCookVoice([{ name: '美佳', lang: 'zh_TW' }]), null);
   assert.equal(selectPreferredCookVoice([]), null);
 });
 
@@ -180,4 +184,119 @@ test('the gentle male cook voice profile remains usable before Safari loads voic
   assert.equal(utterance.rate, 0.92);
   assert.equal(utterance.pitch, 0.9);
   assert.equal('voice' in utterance, false);
+});
+
+test('Safari waits for voiceschanged instead of falling back to its default female voice', async () => {
+  const preferredVoice = { name: 'Reed（中文（台灣））', lang: 'zh-TW' };
+  const synthesis = {
+    voices: [],
+    listener: null,
+    getVoices() {
+      return this.voices;
+    },
+    addEventListener(eventName, listener) {
+      assert.equal(eventName, 'voiceschanged');
+      this.listener = listener;
+    },
+    removeEventListener(eventName, listener) {
+      assert.equal(eventName, 'voiceschanged');
+      if (this.listener === listener) this.listener = null;
+    },
+  };
+
+  const pendingVoice = waitForPreferredCookVoice(synthesis, 100);
+  synthesis.voices = [{ name: '美佳', lang: 'zh-TW' }, preferredVoice];
+  synthesis.listener();
+
+  assert.equal(await pendingVoice, preferredVoice);
+  assert.equal(synthesis.listener, null);
+});
+
+test('Safari never substitutes a Taiwanese female voice when no preferred male voice loads', async () => {
+  const synthesis = {
+    getVoices: () => [{ name: '美佳', lang: 'zh-TW' }],
+    addEventListener() {},
+    removeEventListener() {},
+  };
+
+  assert.equal(await waitForPreferredCookVoice(synthesis, 0), null);
+});
+
+test('Safari cleans up the voiceschanged listener after a positive timeout', async () => {
+  const synthesis = {
+    listener: null,
+    getVoices: () => [{ name: '美佳', lang: 'zh-TW' }],
+    addEventListener(eventName, listener) {
+      this.listener = listener;
+    },
+    removeEventListener(eventName, listener) {
+      if (this.listener === listener) this.listener = null;
+    },
+  };
+
+  assert.equal(await waitForPreferredCookVoice(synthesis, 5), null);
+  assert.equal(synthesis.listener, null);
+});
+
+test('closing the cooking dialog while Safari waits prevents delayed speech', async () => {
+  const preferredVoice = { name: 'Reed（中文（台灣））', lang: 'zh-TW' };
+  let dialogOpen = true;
+  let spokenUtterance = null;
+  const synthesis = {
+    voices: [],
+    listener: null,
+    getVoices() {
+      return this.voices;
+    },
+    cancel() {},
+    speak(utterance) {
+      spokenUtterance = utterance;
+    },
+    addEventListener(eventName, listener) {
+      this.listener = listener;
+    },
+    removeEventListener(eventName, listener) {
+      if (this.listener === listener) this.listener = null;
+    },
+  };
+
+  const pendingSpeech = speakWithPreferredCookVoice({
+    speechSynthesis: synthesis,
+    createUtterance: (text) => ({ text }),
+    answer: '慢慢來，先轉小火。',
+    timeoutMs: 100,
+    isCurrent: () => dialogOpen,
+  });
+  dialogOpen = false;
+  synthesis.voices = [preferredVoice];
+  synthesis.listener();
+
+  assert.equal(await pendingSpeech, false);
+  assert.equal(spokenUtterance, null);
+});
+
+test('aborting a pending male voice request removes its listener', async () => {
+  const controller = new AbortController();
+  const synthesis = {
+    listener: null,
+    getVoices: () => [],
+    addEventListener(eventName, listener) {
+      this.listener = listener;
+    },
+    removeEventListener(eventName, listener) {
+      if (this.listener === listener) this.listener = null;
+    },
+  };
+
+  const pendingVoice = waitForPreferredCookVoice(synthesis, 100, controller.signal);
+  controller.abort();
+
+  assert.equal(synthesis.listener, null);
+  assert.equal(await pendingVoice, null);
+});
+
+test('the deployed app script is cache-busted so Safari receives voice fixes immediately', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
+
+  assert.match(html, /<script src="app\.js\?v=[^"]+"><\/script>/);
 });
