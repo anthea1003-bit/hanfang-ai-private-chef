@@ -88,6 +88,28 @@
       && currentRecorder === callbackRecorder;
   }
 
+  function selectPreferredCookVoice(voices) {
+    const taiwaneseVoices = (Array.isArray(voices) ? voices : []).filter((voice) => (
+      String(voice?.lang || '').replace('_', '-').toLowerCase() === 'zh-tw'
+    ));
+    const preferredNames = ['Reed', 'Eddy', 'Rocko', 'Grandpa'];
+    for (const preferredName of preferredNames) {
+      const match = taiwaneseVoices.find((voice) => String(voice?.name || '').toLowerCase().includes(preferredName.toLowerCase()));
+      if (match) return match;
+    }
+    return taiwaneseVoices[0] || null;
+  }
+
+  function applyCookVoiceProfile(utterance, voices) {
+    if (!utterance || typeof utterance !== 'object') return utterance;
+    utterance.lang = 'zh-TW';
+    utterance.rate = 0.92;
+    utterance.pitch = 0.9;
+    const preferredVoice = selectPreferredCookVoice(voices);
+    if (preferredVoice) utterance.voice = preferredVoice;
+    return utterance;
+  }
+
   return {
     computeScaledDimensions,
     buildCandidateViewModels,
@@ -98,6 +120,8 @@
     getVoiceButtonAction,
     isVoiceSessionCurrent,
     isActiveVoiceRecorder,
+    selectPreferredCookVoice,
+    applyCookVoiceProfile,
   };
 });
 
@@ -111,6 +135,8 @@ const {
   getVoiceButtonAction,
   isVoiceSessionCurrent,
   isActiveVoiceRecorder,
+  selectPreferredCookVoice,
+  applyCookVoiceProfile,
 } =
   (typeof globalThis !== 'undefined' ? globalThis : this).HanfangAppHelpers;
 
@@ -422,12 +448,7 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
       const payload = await response.json();
       const answer = payload.answer || '目前沒有回覆，請再試一次。';
       liveStatus.textContent = answer;
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(answer);
-        utterance.lang = 'zh-TW';
-        window.speechSynthesis.speak(utterance);
-      }
+      speakCookAssistAnswer(answer);
     } catch (error) {
       liveStatus.textContent = '網路不太穩，請再問一次。';
     }
@@ -445,8 +466,10 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
   function speakCookAssistAnswer(answer) {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(answer);
-    utterance.lang = 'zh-TW';
+    const utterance = applyCookVoiceProfile(
+      new SpeechSynthesisUtterance(answer),
+      window.speechSynthesis.getVoices(),
+    );
     window.speechSynthesis.speak(utterance);
   }
 
