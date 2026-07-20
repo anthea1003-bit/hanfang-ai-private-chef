@@ -26,10 +26,83 @@
       });
   }
 
-  return { computeScaledDimensions, buildCandidateViewModels };
+  function selectSupportedAudioMimeType(MediaRecorderCtor) {
+    if (!MediaRecorderCtor || typeof MediaRecorderCtor.isTypeSupported !== 'function') return '';
+    const preferredTypes = [
+      'audio/mp4',
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+    ];
+    return preferredTypes.find((mimeType) => MediaRecorderCtor.isTypeSupported(mimeType)) || '';
+  }
+
+  function buildAudioAssistPayload({ recipeTitle, stepIndex, stepText, audio }) {
+    const parsedStepIndex = Number(stepIndex);
+    return {
+      recipeTitle: (typeof recipeTitle === 'string' ? recipeTitle : '未知').slice(0, 50),
+      stepIndex: Number.isFinite(parsedStepIndex) ? parsedStepIndex : 0,
+      stepText: (typeof stepText === 'string' ? stepText : '未知').slice(0, 300),
+      audio: typeof audio === 'string' ? audio : '',
+    };
+  }
+
+  function getVoiceErrorMessage(errorName) {
+    const normalized = String(errorName || '').toLowerCase();
+    if (normalized === 'notallowederror' || normalized === 'securityerror' || normalized === 'not-allowed') {
+      return '沒有取得麥克風權限，請在瀏覽器網站設定中允許麥克風。';
+    }
+    if (normalized === 'notfounderror' || normalized === 'devicesnotfounderror') {
+      return '找不到可用的麥克風，請確認聲音輸入裝置。';
+    }
+    if (normalized === 'notreadableerror' || normalized === 'trackstarterror') {
+      return '麥克風正被其他程式使用，請關閉其他錄音程式後再試。';
+    }
+    if (normalized === 'network' || normalized === 'aborterror') {
+      return '語音服務連線失敗，請確認網路後再試。';
+    }
+    return '語音錄製失敗，請再試一次。';
+  }
+
+  function getVoiceButtonAction({ recorderState, hasPendingAudio, requestInFlight }) {
+    if (requestInFlight) return 'ignore';
+    if (recorderState === 'recording') return 'stop-and-submit';
+    if (hasPendingAudio) return 'submit-pending';
+    return 'start';
+  }
+
+  function isVoiceSessionCurrent(activeSession, callbackSession, dialogOpen) {
+    return Boolean(dialogOpen) && activeSession === callbackSession;
+  }
+
+  function isActiveVoiceRecorder({ activeSession, callbackSession, dialogOpen, currentRecorder, callbackRecorder }) {
+    return isVoiceSessionCurrent(activeSession, callbackSession, dialogOpen)
+      && Boolean(callbackRecorder)
+      && currentRecorder === callbackRecorder;
+  }
+
+  return {
+    computeScaledDimensions,
+    buildCandidateViewModels,
+    selectSupportedAudioMimeType,
+    buildAudioAssistPayload,
+    getVoiceErrorMessage,
+    getVoiceButtonAction,
+    isVoiceSessionCurrent,
+    isActiveVoiceRecorder,
+  };
 });
 
-const { computeScaledDimensions, buildCandidateViewModels } =
+const {
+  computeScaledDimensions,
+  buildCandidateViewModels,
+  selectSupportedAudioMimeType,
+  buildAudioAssistPayload,
+  getVoiceErrorMessage,
+  getVoiceButtonAction,
+  isVoiceSessionCurrent,
+  isActiveVoiceRecorder,
+} =
   (typeof globalThis !== 'undefined' ? globalThis : this).HanfangAppHelpers;
 
 if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic) {
@@ -60,6 +133,7 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
   const recipeDialog = document.querySelector('#recipeDialog');
   const recipeDialogContent = document.querySelector('#recipeDialogContent');
   const cookingDialog = document.querySelector('#cookingDialog');
+  const voiceButton = document.querySelector('#voiceButton');
   const photoInput = document.querySelector('#ingredientPhoto');
   const scanResult = document.querySelector('#scanResult');
   const scanPreview = document.querySelector('#scanPreview');
@@ -350,6 +424,79 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
     }
   }
 
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('audio_read_failed'));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function speakCookAssistAnswer(answer) {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(answer);
+    utterance.lang = 'zh-TW';
+    window.speechSynthesis.speak(utterance);
+  }
+
+  async function askCookAssistAudio(audio, sessionToken) {
+    const liveStatus = document.querySelector('#liveStatus');
+    if (!state.activeRecipe || !isCurrentVoiceSession(sessionToken)) {
+      liveStatus.textContent = '請先開始陪煮再發問。';
+      setVoiceButtonState('idle');
+      return;
+    }
+
+    voiceRequestInFlight = true;
+    setVoiceButtonState('processing');
+    liveStatus.textContent = '正在辨識並整理你的問題…';
+    const controller = new AbortController();
+    voiceRequestController = controller;
+    try {
+      const timeoutId = setTimeout(() => controller.abort(), 35000);
+      let response;
+      try {
+        response = await fetch(`${API_BASE}/api/cook-assist-audio`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildAudioAssistPayload({
+            recipeTitle: state.activeRecipe.title,
+            stepIndex: state.cookingStep,
+            stepText: state.activeRecipe.steps[state.cookingStep],
+            audio,
+          })),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!isCurrentVoiceSession(sessionToken)) return;
+      if (!response.ok) throw new Error(`audio_assist_${response.status}`);
+      const payload = await response.json();
+      if (!isCurrentVoiceSession(sessionToken)) return;
+      const transcript = typeof payload.transcript === 'string' ? payload.transcript.trim() : '';
+      const answer = typeof payload.answer === 'string' && payload.answer.trim()
+        ? payload.answer.trim()
+        : '沒有聽清楚，請再說一次。';
+      liveStatus.textContent = transcript ? `你問：${transcript}\n${answer}` : answer;
+      if (transcript) speakCookAssistAnswer(answer);
+    } catch (error) {
+      if (!isCurrentVoiceSession(sessionToken)) return;
+      liveStatus.textContent = error?.name === 'AbortError'
+        ? '語音回答逾時，請再試一次。'
+        : '語音回答暫時無法使用，請再試一次。';
+    } finally {
+      if (voiceRequestController === controller) {
+        voiceRequestController = null;
+        voiceRequestInFlight = false;
+        if (isCurrentVoiceSession(sessionToken)) setVoiceButtonState('idle');
+      }
+    }
+  }
+
   function renderStores() {
     const cities = ['全部', '台北市', '台中市', '高雄市'];
     cityTabs.innerHTML = cities.map((city) => `
@@ -407,8 +554,15 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
   });
 
   document.querySelector('[data-close-cooking]').addEventListener('click', () => {
+    cancelVoiceRecording();
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     cookingDialog.close();
+  });
+
+  cookingDialog.addEventListener('cancel', cancelVoiceRecording);
+  cookingDialog.addEventListener('close', () => {
+    cancelVoiceRecording();
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
   });
 
   document.querySelector('#previousStep').addEventListener('click', () => {
@@ -426,94 +580,219 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
     }
   });
 
-  const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let recognizer = null;
-  let isListening = false;
-  let discardVoiceResult = false;
+  const MAX_RECORDING_MS = 15000;
+  const MAX_AUDIO_BYTES = 1500000;
+  let mediaRecorder = null;
+  let mediaStream = null;
+  let pendingAudioBlob = null;
+  let recordingTimer = null;
+  let discardRecordedAudio = false;
+  let submitRecordedAudio = false;
+  let voiceRequestInFlight = false;
+  let voiceRequestController = null;
+  let voiceSession = 0;
 
-  function supportsVoiceAssist() {
-    return Boolean(SpeechRecognitionCtor) && Boolean(API_BASE);
+  function setVoiceButtonState(phase) {
+    const copy = {
+      idle: ['點一下開始說話', '再點一下送出・錄音不保存'],
+      requesting: ['正在開啟麥克風…', '請在瀏覽器選擇允許'],
+      recording: ['送出問題', '錄音中・最長 15 秒'],
+      stopping: ['正在停止錄音…', '錄音尚未傳送'],
+      ready: ['送出問題', '已停止・點擊才會傳送'],
+      processing: ['正在辨識…', '請稍候'],
+    }[phase] || ['點一下開始說話', '再點一下送出・錄音不保存'];
+    voiceButton.setAttribute('aria-pressed', String(phase === 'recording'));
+    voiceButton.querySelector('span').textContent = copy[0];
+    voiceButton.querySelector('small').textContent = copy[1];
+    voiceButton.disabled = phase === 'requesting' || phase === 'stopping' || phase === 'processing';
   }
 
-  function stopListening(button, options = {}) {
-    isListening = false;
-    if (options.userCancelled) discardVoiceResult = true;
-    if (recognizer) {
+  function isCurrentVoiceSession(sessionToken) {
+    return isVoiceSessionCurrent(voiceSession, sessionToken, cookingDialog.open);
+  }
+
+  function stopVoiceStream(stream) {
+    stream?.getTracks().forEach((track) => track.stop());
+  }
+
+  function releaseVoiceStream(stream = mediaStream) {
+    stopVoiceStream(stream);
+    if (mediaStream === stream) mediaStream = null;
+  }
+
+  function cancelVoiceRecording() {
+    voiceSession += 1;
+    discardRecordedAudio = true;
+    submitRecordedAudio = false;
+    pendingAudioBlob = null;
+    voiceRequestController?.abort();
+    voiceRequestController = null;
+    voiceRequestInFlight = false;
+    clearTimeout(recordingTimer);
+    recordingTimer = null;
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       try {
-        // abort() drops audio already captured; stop() would still fire
-        // onresult and send a request the user just cancelled.
-        if (options.userCancelled && typeof recognizer.abort === 'function') recognizer.abort();
-        else recognizer.stop();
+        mediaRecorder.stop();
       } catch (error) {
-        // no-op: recognizer may already be stopped
+        // no-op: recorder may already be stopping
       }
     }
-    button.setAttribute('aria-pressed', 'false');
-    button.querySelector('span').textContent = '按住說話';
+    releaseVoiceStream();
+    setVoiceButtonState('idle');
   }
 
-  function startListening(button) {
-    recognizer = new SpeechRecognitionCtor();
-    recognizer.lang = 'zh-TW';
-    recognizer.interimResults = false;
-    recognizer.maxAlternatives = 1;
+  function stopVoiceRecording({ submit }) {
+    if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
+    discardRecordedAudio = false;
+    submitRecordedAudio = Boolean(submit);
+    clearTimeout(recordingTimer);
+    recordingTimer = null;
+    setVoiceButtonState(submit ? 'processing' : 'stopping');
+    document.querySelector('#liveStatus').textContent = submit
+      ? '正在準備語音…'
+      : '已到 15 秒，正在停止錄音；尚未傳送。';
+    mediaRecorder.stop();
+  }
 
-    isListening = true;
-    discardVoiceResult = false;
-    button.setAttribute('aria-pressed', 'true');
-    button.querySelector('span').textContent = '正在聽…';
-    document.querySelector('#liveStatus').textContent = '請說出你的問題…';
-
-    recognizer.onresult = (event) => {
-      if (discardVoiceResult) return;
-      const transcript = event.results?.[0]?.[0]?.transcript || '';
-      document.querySelector('#liveStatus').textContent = `你問：${transcript}`;
-      stopListening(button);
-      if (transcript.trim()) askCookAssist(transcript.trim());
-    };
-
-    recognizer.onerror = (event) => {
-      stopListening(button);
-      if (event.error === 'aborted') {
-        document.querySelector('#liveStatus').textContent = '已停止聆聽。';
-        return;
-      }
-      document.querySelector('#liveStatus').textContent = event.error === 'not-allowed' || event.error === 'permission-denied'
-        ? '沒有取得麥克風權限，請確認瀏覽器設定。'
-        : '語音辨識失敗，請再試一次。';
-    };
-
-    recognizer.onend = () => {
-      if (isListening) stopListening(button);
-    };
-
+  async function submitPendingVoiceAudio(sessionToken) {
+    const liveStatus = document.querySelector('#liveStatus');
+    const audioBlob = pendingAudioBlob;
+    pendingAudioBlob = null;
+    if (!audioBlob || !isCurrentVoiceSession(sessionToken)) {
+      setVoiceButtonState('idle');
+      return;
+    }
+    setVoiceButtonState('processing');
+    liveStatus.textContent = '正在準備語音…';
     try {
-      recognizer.start();
+      const audio = await blobToDataUrl(audioBlob);
+      if (isCurrentVoiceSession(sessionToken)) await askCookAssistAudio(audio, sessionToken);
     } catch (error) {
-      stopListening(button);
-      document.querySelector('#liveStatus').textContent = '無法啟動語音辨識，請再試一次。';
+      if (!isCurrentVoiceSession(sessionToken)) return;
+      liveStatus.textContent = '無法讀取錄音，請再試一次。';
+      setVoiceButtonState('idle');
     }
   }
 
-  document.querySelector('#voiceButton').addEventListener('click', (event) => {
-    const button = event.currentTarget;
-
-    if (supportsVoiceAssist()) {
-      if (isListening) {
-        stopListening(button, { userCancelled: true });
-        document.querySelector('#liveStatus').textContent = '已停止聆聽。';
-      } else {
-        startListening(button);
-      }
+  async function startVoiceRecording() {
+    const liveStatus = document.querySelector('#liveStatus');
+    if (!API_BASE) {
+      liveStatus.textContent = '語音服務尚未連接。';
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof window.MediaRecorder !== 'function') {
+      liveStatus.textContent = '這個瀏覽器不支援錄音，請改用最新版 Safari 或 Chrome。';
       return;
     }
 
-    const listening = button.getAttribute('aria-pressed') !== 'true';
-    button.setAttribute('aria-pressed', String(listening));
-    button.querySelector('span').textContent = listening ? '正在聽…' : '按住說話';
-    document.querySelector('#liveStatus').textContent = listening
-      ? '語音功能目前為介面試玩，尚未連接辨識服務。'
-      : '已停止試玩語音。';
+    const sessionToken = voiceSession + 1;
+    voiceSession = sessionToken;
+    pendingAudioBlob = null;
+    setVoiceButtonState('requesting');
+    liveStatus.textContent = '正在請求麥克風權限…';
+    try {
+      const requestedStream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      if (!isCurrentVoiceSession(sessionToken)) {
+        requestedStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      mediaStream = requestedStream;
+      const mimeType = selectSupportedAudioMimeType(window.MediaRecorder);
+      mediaRecorder = mimeType
+        ? new window.MediaRecorder(mediaStream, { mimeType })
+        : new window.MediaRecorder(mediaStream);
+      const activeRecorder = mediaRecorder;
+      const recorderChunks = [];
+      discardRecordedAudio = false;
+      submitRecordedAudio = false;
+
+      activeRecorder.ondataavailable = (event) => {
+        if (isActiveVoiceRecorder({
+          activeSession: voiceSession,
+          callbackSession: sessionToken,
+          dialogOpen: cookingDialog.open,
+          currentRecorder: mediaRecorder,
+          callbackRecorder: activeRecorder,
+        }) && event.data?.size) recorderChunks.push(event.data);
+      };
+      activeRecorder.onerror = (event) => {
+        if (!isActiveVoiceRecorder({
+          activeSession: voiceSession,
+          callbackSession: sessionToken,
+          dialogOpen: cookingDialog.open,
+          currentRecorder: mediaRecorder,
+          callbackRecorder: activeRecorder,
+        })) return;
+        discardRecordedAudio = true;
+        liveStatus.textContent = getVoiceErrorMessage(event?.error?.name || event?.name);
+        releaseVoiceStream(requestedStream);
+        setVoiceButtonState('idle');
+      };
+      activeRecorder.onstop = async () => {
+        const ownsActiveRecorder = isActiveVoiceRecorder({
+          activeSession: voiceSession,
+          callbackSession: sessionToken,
+          dialogOpen: cookingDialog.open,
+          currentRecorder: mediaRecorder,
+          callbackRecorder: activeRecorder,
+        });
+        if (!ownsActiveRecorder) {
+          stopVoiceStream(requestedStream);
+          return;
+        }
+        clearTimeout(recordingTimer);
+        recordingTimer = null;
+        const shouldDiscard = discardRecordedAudio;
+        const chunks = recorderChunks.splice(0);
+        mediaRecorder = null;
+        releaseVoiceStream(requestedStream);
+        if (shouldDiscard) return;
+
+        const audioBlob = new Blob(chunks, { type: activeRecorder.mimeType || mimeType || 'audio/mp4' });
+        if (!audioBlob.size) {
+          liveStatus.textContent = '沒有收到錄音，請再試一次。';
+          setVoiceButtonState('idle');
+          return;
+        }
+        if (audioBlob.size > MAX_AUDIO_BYTES) {
+          liveStatus.textContent = '錄音太長，請用 15 秒內說完問題。';
+          setVoiceButtonState('idle');
+          return;
+        }
+
+        pendingAudioBlob = audioBlob;
+        if (submitRecordedAudio) {
+          await submitPendingVoiceAudio(sessionToken);
+        } else {
+          setVoiceButtonState('ready');
+          liveStatus.textContent = '錄音已停止且尚未傳送；點「送出問題」才會送出。';
+        }
+      };
+
+      activeRecorder.start();
+      setVoiceButtonState('recording');
+      liveStatus.textContent = '正在錄音；說完後再點一次送出。';
+      recordingTimer = setTimeout(() => stopVoiceRecording({ submit: false }), MAX_RECORDING_MS);
+    } catch (error) {
+      if (!isCurrentVoiceSession(sessionToken)) return;
+      releaseVoiceStream();
+      mediaRecorder = null;
+      liveStatus.textContent = getVoiceErrorMessage(error?.name);
+      setVoiceButtonState('idle');
+    }
+  }
+
+  voiceButton.addEventListener('click', () => {
+    const action = getVoiceButtonAction({
+      recorderState: mediaRecorder?.state,
+      hasPendingAudio: Boolean(pendingAudioBlob),
+      requestInFlight: voiceRequestInFlight,
+    });
+    if (action === 'stop-and-submit') stopVoiceRecording({ submit: true });
+    else if (action === 'submit-pending') submitPendingVoiceAudio(voiceSession);
+    else if (action === 'start') startVoiceRecording();
   });
 
   photoInput.addEventListener('change', () => {
@@ -543,6 +822,7 @@ if (typeof window !== 'undefined' && window.HANFANG_DATA && window.HanfangLogic)
   });
 
   window.addEventListener('beforeunload', () => {
+    cancelVoiceRecording();
     if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
   });
 

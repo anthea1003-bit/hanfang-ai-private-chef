@@ -1,7 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { isAllowedOrigin, parseCandidates, checkRateLimit } = require('../worker/src/lib.js');
+const {
+  isAllowedOrigin,
+  parseCandidates,
+  checkRateLimit,
+  parseAudioDataUrl,
+  parseAudioAssistResult,
+} = require('../worker/src/lib.js');
 
 const validIngredients = [
   { id: 'I09', name: '枸杞子' },
@@ -147,4 +153,54 @@ test('expired entries are swept out once the store grows past 1000 keys', () => 
   checkRateLimit(store, 'fresh-ip', 1000 + 60000, 20, 60000);
   assert.equal(store.size, 1);
   assert.equal(store.has('fresh-ip'), true);
+});
+
+test('Safari MP4 audio data URLs are accepted and split into Gemini inline data', () => {
+  assert.deepEqual(parseAudioDataUrl('data:audio/mp4;base64,QUJDRA=='), {
+    ok: true,
+    mimeType: 'audio/mp4',
+    base64Data: 'QUJDRA==',
+  });
+});
+
+test('audio codecs are accepted without leaking into the Gemini mime type', () => {
+  assert.deepEqual(parseAudioDataUrl('data:audio/webm;codecs=opus;base64,QUJDRA=='), {
+    ok: true,
+    mimeType: 'audio/webm',
+    base64Data: 'QUJDRA==',
+  });
+});
+
+test('non-audio and unsupported audio payloads are rejected', () => {
+  assert.deepEqual(parseAudioDataUrl('data:image/png;base64,QUJDRA=='), { ok: false, error: 'bad_request' });
+  assert.deepEqual(parseAudioDataUrl('data:audio/aac;base64,QUJDRA=='), { ok: false, error: 'unsupported_media_type' });
+});
+
+test('oversized audio payloads are rejected before Gemini is called', () => {
+  const oversized = `data:audio/mp4;base64,${'A'.repeat(101)}`;
+  assert.deepEqual(parseAudioDataUrl(oversized, 100), { ok: false, error: 'payload_too_large' });
+});
+
+test('structured audio assist results are bounded and normalized', () => {
+  const raw = JSON.stringify({
+    transcript: ` 要洗多久？${'。'.repeat(300)} `,
+    answer: `快速沖洗即可。${'。'.repeat(400)}`,
+  });
+  const result = parseAudioAssistResult(raw);
+
+  assert.equal(result.transcript.startsWith('要洗多久？'), true);
+  assert.equal(result.transcript.length, 200);
+  assert.equal(result.answer.startsWith('快速沖洗即可。'), true);
+  assert.equal(result.answer.length, 300);
+});
+
+test('malformed or silent audio results use a safe retry response', () => {
+  assert.deepEqual(parseAudioAssistResult('not json'), {
+    transcript: '',
+    answer: '沒有聽清楚，請再說一次。',
+  });
+  assert.deepEqual(parseAudioAssistResult('{"transcript":"","answer":""}'), {
+    transcript: '',
+    answer: '沒有聽清楚，請再說一次。',
+  });
 });

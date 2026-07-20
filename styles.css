@@ -771,7 +771,8 @@ dialog::backdrop { background: rgba(24, 34, 29, .58); backdrop-filter: blur(8px)
 .voice-button { display: grid; gap: 1px; min-height: 64px; color: var(--paper-light); background: var(--coral); border: 0; border-radius: 20px 14px 22px 15px; cursor: pointer; }
 .voice-button small { color: rgba(255,255,255,.72); font-size: 9px; }
 .voice-button[aria-pressed="true"] { animation: voicePulse 1s ease-in-out infinite; background: #a94f43; }
-.live-status { min-height: 24px; margin: 12px 0 0; color: #f0d488; font-size: 11px; text-align: center; }
+.voice-button:disabled { cursor: wait; opacity: .72; }
+.live-status { min-height: 24px; margin: 12px 0 0; color: #f0d488; font-size: 11px; text-align: center; white-space: pre-line; }
 
 @keyframes voicePulse { 50% { box-shadow: 0 0 0 10px rgba(200,111,92,.18); } }
 @keyframes revealUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }

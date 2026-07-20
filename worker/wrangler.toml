@@ -4,3 +4,11 @@ compatibility_date = "2026-07-14"
 
 [vars]
 GEMINI_MODEL = "gemini-3.1-flash-lite"
+
+[[ratelimits]]
+name = "AUDIO_RATE_LIMITER"
+namespace_id = "31082026"
+
+  [ratelimits.simple]
+  limit = 6
+  period = 60

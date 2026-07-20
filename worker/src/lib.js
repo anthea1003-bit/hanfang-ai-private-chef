@@ -5,6 +5,14 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function createHanfangWorkerLib() {
   const ALLOWED_STATIC_ORIGIN = 'https://anthea1003-bit.github.io';
   const LOCAL_ORIGIN_PATTERN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+  const ALLOWED_AUDIO_MIME_TYPES = new Set([
+    'audio/mp4',
+    'audio/webm',
+    'audio/ogg',
+    'audio/mpeg',
+    'audio/wav',
+    'audio/x-m4a',
+  ]);
 
   function isAllowedOrigin(origin) {
     if (!origin || typeof origin !== 'string') return false;
@@ -72,5 +80,43 @@
     return { allowed: true, remaining: limit - existing.count };
   }
 
-  return { isAllowedOrigin, parseCandidates, checkRateLimit };
+  function parseAudioDataUrl(audio, maxBase64Length = 2000000) {
+    if (typeof audio !== 'string') return { ok: false, error: 'bad_request' };
+    const match = audio.match(/^data:(audio\/[a-zA-Z0-9.+-]+)(?:;codecs=[^;]+)?;base64,([A-Za-z0-9+/=]+)$/);
+    if (!match) return { ok: false, error: 'bad_request' };
+
+    const [, mimeType, base64Data] = match;
+    if (!ALLOWED_AUDIO_MIME_TYPES.has(mimeType)) {
+      return { ok: false, error: 'unsupported_media_type' };
+    }
+    if (base64Data.length > maxBase64Length) {
+      return { ok: false, error: 'payload_too_large' };
+    }
+    if (!base64Data || base64Data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64Data)) {
+      return { ok: false, error: 'bad_request' };
+    }
+    return { ok: true, mimeType, base64Data };
+  }
+
+  function parseAudioAssistResult(rawText) {
+    let parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (error) {
+      return { transcript: '', answer: '沒有聽清楚，請再說一次。' };
+    }
+
+    const transcript = (typeof parsed?.transcript === 'string' ? parsed.transcript.trim() : '').slice(0, 200);
+    const answer = (typeof parsed?.answer === 'string' ? parsed.answer.trim() : '').slice(0, 300);
+    if (!transcript || !answer) return { transcript: '', answer: '沒有聽清楚，請再說一次。' };
+    return { transcript, answer };
+  }
+
+  return {
+    isAllowedOrigin,
+    parseCandidates,
+    checkRateLimit,
+    parseAudioDataUrl,
+    parseAudioAssistResult,
+  };
 });
